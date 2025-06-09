@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OBS Overlay</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+ html, body { margin:0; padding:0; }
+ body {
+   width:1920px; height:1080px;
+   background: linear-gradient(#151515, #1E1E29);
+   overflow:hidden; position:relative;
+   font-family:sans-serif;
+ }
+ .chat-msg { opacity:0; transition: opacity 1s; }
+ .fade-in { opacity:1; }
+ #warning { display:none; }
+</style>
+</head>
+<body>
+<canvas id="star-canvas" class="absolute inset-0 z-0"></canvas>
+<div id="title" class="absolute top-4 left-1/2 -translate-x-1/2 text-white text-3xl font-bold z-10">Live Stream</div>
+<img id="logo" class="absolute bottom-4 left-4 h-20 hidden z-10" crossorigin="anonymous"/>
+<div id="chat" class="absolute top-0 right-0 w-\[30%\] h-full flex flex-col-reverse p-4 overflow-hidden space-y-2 space-y-reverse z-10"></div>
+<div id="warning" class="absolute top-0 left-0 right-0 bg-red-600 text-white text-center py-1 z-20">API quota exceeded. Chat paused.</div>
+<script type="module">
+const params = new URLSearchParams(location.search);
+const DEMO_API_KEY = "YOUR_API_KEY_HERE";
+let API_KEY = params.get('apiKey') || DEMO_API_KEY;
+let liveChatId = params.get('liveId');
+const broadcastId = params.get('broadcastId');
+const title = params.get('title') || 'Live Stream';
+document.getElementById('title').textContent = title;
+const logoParam = params.get('logo');
+if(logoParam){
+  const logo = document.getElementById('logo');
+  logo.src = logoParam;
+  logo.classList.remove('hidden');
+}
+const warning = document.getElementById('warning');
+async function resolveLiveChatId(){
+  if(!liveChatId && broadcastId){
+    try{
+      const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${broadcastId}&key=${API_KEY}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      liveChatId = data.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+    }catch(e){console.error(e);}
+  }
+}
+
+async function init(){
+  await resolveLiveChatId();
+  poll();
+  setInterval(poll, 2000);
+}
+init();
+const chat = document.getElementById('chat');
+let nextPageToken = '';
+let seenIds = new Set();
+let polling = true;
+async function poll(){
+  if(!liveChatId || !polling) return;
+  try{
+    const url = new URL('https://www.googleapis.com/youtube/v3/liveChat/messages');
+    url.searchParams.set('part','snippet,authorDetails');
+    url.searchParams.set('liveChatId', liveChatId);
+    url.searchParams.set('key', API_KEY);
+    url.searchParams.set('maxResults','50');
+    if(nextPageToken) url.searchParams.set('pageToken', nextPageToken);
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error) throw data.error;
+    nextPageToken = data.nextPageToken || '';
+    const messages = data.items || [];
+    for(const msg of messages){
+      if(seenIds.has(msg.id)) continue;
+      seenIds.add(msg.id);
+      addMessage(msg);
+    }
+  }catch(e){
+    if(e && e.errors && e.errors[0].reason === 'quotaExceeded'){
+      polling = false;
+      warning.style.display = 'block';
+    } else {
+      console.error(e);
+    }
+  }
+}
+function addMessage(msg){
+  const author = msg.authorDetails.displayName;
+  const color = msg.authorDetails.authorColor;
+  const text = msg.snippet.displayMessage;
+  const div = document.createElement('div');
+  div.className = 'chat-msg text-sm text-white px-2 py-1 bg-black bg-opacity-40 rounded';
+  const nameSpan = document.createElement('span');
+  if(color) nameSpan.style.color = color;
+  nameSpan.textContent = author + ': ';
+  const msgSpan = document.createElement('span');
+  msgSpan.innerHTML = text;
+  div.append(nameSpan, msgSpan);
+  chat.prepend(div);
+  requestAnimationFrame(()=>div.classList.add('fade-in'));
+  setTimeout(()=>{ div.style.opacity = '0'; }, 30000);
+  setTimeout(()=>{ div.remove(); }, 31000);
+}
+// Shooting star effect
+const canvas = document.getElementById('star-canvas');
+canvas.width = 1920; canvas.height = 1080;
+const ctx = canvas.getContext('2d');
+let stars = [];
+function spawnStar(){
+  const size = 2 + Math.random()*2;
+  const y = Math.random()*canvas.height;
+  const speed = 200 + Math.random()*100;
+  const angle = -0.2 + Math.random()*0.4;
+  stars.push({x:canvas.width, y, size, vx:-speed, vy:speed*angle, life:0});
+}
+let last = performance.now();
+function frame(t){
+  const dt = (t - last)/1000; last = t;
+  if(Math.random() < dt*1.5) spawnStar();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  stars.forEach(s => { s.x += s.vx*dt; s.y += s.vy*dt; s.life += dt; });
+  stars = stars.filter(s=> s.x>-s.size && s.y<canvas.height+s.size && s.life<4);
+  for(const s of stars){
+    ctx.globalAlpha = 0.5 + 0.5*Math.sin(t*0.005 + s.x);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
